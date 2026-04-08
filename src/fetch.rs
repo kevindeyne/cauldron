@@ -48,7 +48,7 @@ pub fn fetch_remote() -> Result<Cache, String> {
 
         let cached: Vec<CachedEntry> = entries
             .into_iter()
-            .map(|e| CachedEntry { version: e.version, url: e.url })
+            .map(|e| CachedEntry { version: e.version, url: e.url, checksums: e.checksums })
             .collect();
 
         data.entry(category).or_default().insert(vendor, cached);

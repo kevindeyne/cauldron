@@ -17,12 +17,21 @@ pub struct GitTreeItem {
 pub struct RemoteEntry {
     pub version: String,
     pub url: String,
+    pub checksums: Option<Checksums>
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CachedEntry {
     pub version: String,
     pub url: String,
+    pub checksums: Option<Checksums>
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Checksums {
+    pub md5: Option<String>,
+    #[serde(rename = "SHA-256")]
+    pub sha256: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
