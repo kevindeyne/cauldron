@@ -44,7 +44,7 @@ mod tests {
 
     #[test]
     fn non_numeric_versions_compared_lexically() {
-        assert_eq!(version_cmp("lts", "stable"), Ordering::Greater); // 'l' > 's' is false, actually 'l' < 's'
+        assert_eq!(version_cmp("lts", "stable"), Ordering::Less);
         assert_eq!(version_cmp("alpha", "beta"), Ordering::Less);
     }
 

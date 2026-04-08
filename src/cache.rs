@@ -44,6 +44,8 @@ fn save(cache: &Cache) {
     }
 }
 
+const DAILY: u64 = 86_400;
+
 fn is_fresh(cache: &Cache) -> bool {
-    now_secs().saturating_sub(cache.fetched_at) < 86_400
+    now_secs().saturating_sub(cache.fetched_at) < DAILY
 }
