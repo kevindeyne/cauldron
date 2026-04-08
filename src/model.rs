@@ -40,3 +40,9 @@ pub struct Cache {
     /// category -> vendor -> entries
     pub data: HashMap<String, HashMap<String, Vec<CachedEntry>>>,
 }
+
+#[derive(Deserialize)]
+pub struct ToolConfig {
+    pub home_var: String,   // e.g. "JAVA_HOME"
+    pub bin_subdir: String, // e.g. "bin"
+}

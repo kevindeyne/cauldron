@@ -3,6 +3,9 @@ mod commands;
 mod fetch;
 mod model;
 mod util;
+mod unpack;
+mod junction_setup;
+mod env_update;
 
 use clap::{Parser, Subcommand};
 

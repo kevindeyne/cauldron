@@ -1,10 +1,22 @@
 use std::{env, path::PathBuf, time::{Duration, SystemTime, UNIX_EPOCH}};
 
-pub fn cache_path() -> PathBuf {
+pub fn cauldron_dir() -> PathBuf {
     let home = env::var("USERPROFILE")
         .or_else(|_| env::var("HOME"))
         .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".cauldron").join("cache.json")
+    PathBuf::from(home).join(".cauldron")
+}
+
+pub fn cache_path() -> PathBuf {
+    cauldron_dir().join("cache.json")
+}
+
+pub fn candidates_dir(tool: &str, vendor: &str, version: &str) -> PathBuf {
+    cauldron_dir().join("candidates").join(tool).join(vendor).join(version)
+}
+
+pub fn junction_path(tool: &str) -> PathBuf {
+    cauldron_dir().join("current").join(tool)
 }
 
 pub fn now_secs() -> u64 {

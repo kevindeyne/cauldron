@@ -1,137 +1,123 @@
-use crate::cache;
-use anyhow::bail;
+use crate::{cache, env_update, fetch, junction_setup, unpack, util};
+use anyhow::{bail, Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::PathBuf;
-use std::{env, fs};
+use std::path::Path;
 
 pub fn run(category: &str, vendor: &str, version: &str) {
     let cache = cache::get();
 
-    let vendors = match cache.data.get(category) {
-        Some(v) => v,
-        None => {
-            eprintln!("No data found for category '{}'.", category);
+    let entry = cache
+        .data
+        .get(category)
+        .and_then(|vendors| vendors.get(vendor))
+        .and_then(|entries| entries.iter().find(|e| e.version == version))
+        .unwrap_or_else(|| {
+            eprintln!("'{}' '{}' version '{}' not found. Run 'sdk list {}' to see available options.", vendor, version, category, category);
             std::process::exit(1);
-        }
-    };
+        });
 
-    let entries = match vendors.get(vendor) {
-        Some(e) => e,
-        None => {
-            eprintln!("Unknown vendor '{}' for category '{}'.", vendor, category);
+    let checksum = entry
+        .checksums
+        .as_ref()
+        .and_then(|c| c.sha256.as_ref())
+        .unwrap_or_else(|| {
+            eprintln!("No SHA-256 checksum available for this entry.");
             std::process::exit(1);
-        }
-    };
+        });
 
-    let entry = match entries.iter().find(|e| e.version == version) {
-        Some(e) => e,
-        None => {
-            eprintln!(
-                "Version '{}' not found for '{} {}'.",
-                version, category, vendor
-            );
-            std::process::exit(1);
-        }
-    };
+    let candidate_dir = util::candidates_dir(category, vendor, version);
+    let junction_path = util::junction_path(category);
 
-    download(
-        &entry.url,
-        &entry.checksums.as_ref().unwrap().sha256.as_ref().unwrap(),
-    )
-    .expect("expected download to occur");
+    if let Err(e) = download(&entry.url, checksum, &candidate_dir, &junction_path, category) {
+        eprintln!("Install failed: {:#}", e);
+        std::process::exit(1);
+    }
+
+    println!("Done! {} {} {} is now active.", category, vendor, version);
 }
 
-fn download(url_to_download: &str, checksum: &str) -> anyhow::Result<()> {
+fn download(url: &str, checksum: &str, candidate_dir: &Path, junction_path: &Path, category: &str) -> Result<()> {
+    let downloads_dir = util::cauldron_dir().join("downloads");
+    fs::create_dir_all(&downloads_dir).context("Cannot create downloads dir")?;
+
+    let filename = url.split('/').last().context("URL has no filename segment")?;
+    let zip_path = downloads_dir.join(filename);
+
+    if zip_path.exists() {
+        println!("Already downloaded: {}", zip_path.display());
+    } else {
+        fetch_to_disk(url, &zip_path)?;
+    }
+
+    verify_checksum(&zip_path, checksum)?;
+    unpack_and_link(&zip_path, candidate_dir, junction_path, category)
+}
+
+fn fetch_to_disk(url: &str, zip_path: &Path) -> Result<()> {
+    println!("Downloading: {}", zip_path.display());
+
     let client = Client::new();
-    let mut resp = client.get(url_to_download).send()?; // resp is now Response
+    let mut resp = client.get(url).send().context("HTTP request failed")?;
 
-    let total_size = resp
-        .content_length()
-        .ok_or_else(|| anyhow::anyhow!("No content length"))?;
-
-    let pb = ProgressBar::new(total_size);
+    let total = resp.content_length().context("No content-length header")?;
+    let pb = ProgressBar::new(total);
     pb.set_style(ProgressStyle::with_template(
         "{bar:40.cyan/blue} {bytes}/{total_bytes} ({eta})",
     )?);
 
-    let downloads_dir = cauldron_download_path()?;
-    let filename = filename_from_url(url_to_download)?;
-    let zip_path = downloads_dir.join(filename);
-
-    if zip_path.exists() {
-        println!("File already downloaded: {}", zip_path.display());
-        verify_checksums(&zip_path.to_str().unwrap(), checksum).expect("checksum should match");
-        // TODO : verify checksum here to make sure the file isn't corrupt
-        return Ok(());
-    }
-
-    println!("Downloading: {}", zip_path.display());
-
-    let mut file = File::create(&zip_path)?;
-
-    let mut downloaded: u64 = 0;
-    let mut buffer = [0; 8192];
+    let mut file = File::create(zip_path).context("Cannot create zip file")?;
+    let mut buf = [0u8; 8192];
+    let mut downloaded = 0u64;
 
     loop {
-        let n = resp.read(&mut buffer)?;
-        if n == 0 {
-            break;
-        }
-        file.write_all(&buffer[..n])?;
+        let n = resp.read(&mut buf).context("Error reading response")?;
+        if n == 0 { break; }
+        file.write_all(&buf[..n]).context("Error writing zip")?;
         downloaded += n as u64;
         pb.set_position(downloaded);
     }
 
     pb.finish_with_message("Download complete");
-    verify_checksums(&zip_path.to_str().unwrap(), checksum).expect("checksum should match");
     Ok(())
 }
 
-fn cauldron_download_path() -> anyhow::Result<PathBuf> {
-    let user_profile = env::var("USERPROFILE")?; // get %USERPROFILE%
-    let mut path = PathBuf::from(user_profile);
-    path.push(".cauldron");
-    path.push("downloads");
+fn verify_checksum(zip_path: &Path, expected: &str) -> Result<()> {
+    println!("Verifying checksum...");
 
-    // create the directory if it doesn't exist
-    fs::create_dir_all(&path)?;
-
-    Ok(path)
-}
-
-fn filename_from_url(url: &str) -> anyhow::Result<String> {
-    let parts: Vec<&str> = url.split('/').collect();
-    let last = parts
-        .last()
-        .ok_or_else(|| anyhow::anyhow!("URL has no filename segment"))?;
-    Ok(last.to_string())
-}
-
-fn verify_checksums(path: &str, expected: &str) -> anyhow::Result<()> {
-    println!("Verifying checksum: {}", path);
-    let mut file = File::open(path)?;
+    let mut file = File::open(zip_path).context("Cannot open zip for checksum")?;
     let mut hasher = Sha256::new();
+    let mut buf = [0u8; 8192];
 
-    let mut buffer = [0; 8192];
-    while let Ok(n) = file.read(&mut buffer) {
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buffer[..n]);
+    loop {
+        let n = file.read(&mut buf).context("Error reading zip for checksum")?;
+        if n == 0 { break; }
+        hasher.update(&buf[..n]);
     }
 
-    let expected_hash = hasher.finalize();
-    let input_hash = hex::decode(expected.trim()).expect("Failed to decode");
+    let actual = hasher.finalize();
+    let expected_bytes = hex::decode(expected.trim()).context("Invalid checksum hex")?;
 
-    if &expected_hash[..] != &input_hash[..] {
-        bail!("Checksum verification failed");
+    if actual[..] != expected_bytes[..] {
+        bail!("Checksum mismatch — file may be corrupt or tampered with");
     }
 
     println!("Checksum OK");
+    Ok(())
+}
+
+fn unpack_and_link(zip_path: &Path, candidate_dir: &Path, junction_path: &Path, category: &str) -> Result<()> {
+    println!("Unpacking to {}...", candidate_dir.display());
+    unpack::unpack_zip(zip_path.to_str().unwrap(), candidate_dir).expect("Unpack failed");
+
+    println!("Updating junction to {}...", candidate_dir.display());
+    junction_setup::set_junction(junction_path, candidate_dir).expect("Junction failed");
+
+    let config = fetch::fetch_tool_config(category).expect("Could not load tool config");
+    env_update::apply(&config.home_var, junction_path, &config.bin_subdir).expect("Env update failed");
 
     Ok(())
 }

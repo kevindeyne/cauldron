@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::model::{Cache, CachedEntry, GitTreeResponse, RemoteEntry};
+use crate::model::{Cache, CachedEntry, GitTreeResponse, RemoteEntry, ToolConfig};
 use crate::util::now_secs;
 
 const REPO_BASE: &str = "https://raw.githubusercontent.com/kevindeyne/cauldron-recipes/main";
@@ -17,6 +17,12 @@ pub fn fetch_text(url: &str) -> Result<String, String> {
         .into_body()
         .read_to_string()
         .map_err(|e| format!("Failed to read response body: {}", e))
+}
+
+pub fn fetch_tool_config(tool: &str) -> Result<ToolConfig, String> {
+    let url = format!("{}/{}/_setup.json", REPO_BASE, tool);
+    let body = fetch_text(&url)?;
+    serde_json::from_str(&body).map_err(|e| format!("Invalid tool config for '{}': {}", tool, e))
 }
 
 pub fn fetch_remote() -> Result<Cache, String> {
