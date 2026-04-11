@@ -12,6 +12,10 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "cauldron", about = "Cauldron SDK Manager", version)]
 struct Cli {
+    // Internal: used by elevated subprocess to clean system PATH entries
+    #[arg(long, hide = true)]
+    clean_system_path: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -32,6 +36,12 @@ enum Commands {
 
 fn main() {
     let cli = Cli::parse();
+
+    // Elevated subprocess entrypoint
+    if let Some(entries) = cli.clean_system_path {
+        env_update::clean_system_path_elevated(&entries);
+        return;
+    }
 
     match cli.command {
         None => {
