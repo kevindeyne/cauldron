@@ -5,11 +5,7 @@ const ENV_KEY: &str = "Environment";
 
 /// Set `home_var` to `junction_path` and ensure `{junction_path}\{bin_subdir}` is in PATH,
 /// replacing any existing cauldron-managed entry for this tool.
-pub fn apply(
-    home_var: &str,
-    junction_path: &Path,
-    bin_subdir: &str,
-) -> Result<(), String> {
+pub fn apply(home_var: &str, junction_path: &Path, bin_subdir: &str) -> Result<(), String> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let env = hkcu
         .open_subkey_with_flags(ENV_KEY, KEY_READ | KEY_WRITE)
@@ -23,38 +19,43 @@ pub fn apply(
     env.set_value(home_var, &junction_str)
         .map_err(|e| format!("Cannot set {}: {}", home_var, e))?;
 
-    // Build the bin path we want in PATH
+    // Verify it was written
+    let written_home: String = env.get_value(home_var).unwrap_or_else(|_| "<unreadable>".into());
+    println!("  {} = {}", home_var, written_home);
+
     let new_bin = format!("{}\\{}", junction_str, bin_subdir);
 
-    // Read current PATH
     let current_path: String = env.get_value("PATH").unwrap_or_default();
+    println!("  PATH before: {}", current_path);
 
-    let updated_path = update_path(&current_path, &new_bin, home_var);
+    let updated_path = update_path(&current_path, &new_bin, junction_str);
+    println!("  PATH after:  {}", updated_path);
 
     env.set_value("PATH", &updated_path)
         .map_err(|e| format!("Cannot set PATH: {}", e))?;
 
-    broadcast_settings_change();
+    // Verify PATH was written
+    let written_path: String = env.get_value("PATH").unwrap_or_else(|_| "<unreadable>".into());
+    println!("  PATH written: {}", written_path);
 
-    println!("Set {} = {}", home_var, junction_str);
-    println!("Updated PATH");
+    broadcast_settings_change();
+    println!("  WM_SETTINGCHANGE broadcast sent");
 
     Ok(())
 }
 
-/// Replace any existing cauldron entry for this tool in PATH, or append if absent.
-/// Cauldron entries are identified by containing the home_var name (case-insensitive).
-fn update_path(current: &str, new_bin: &str, home_var: &str) -> String {
-    let tool_marker = home_var.to_lowercase();
+/// Replace any existing cauldron-managed entry for this tool in PATH, or append if absent.
+/// Matches on the junction base path so it catches entries from previous installs.
+fn update_path(current: &str, new_bin: &str, junction_path: &str) -> String {
+    // Normalise to lowercase for comparison
+    let junction_lower = junction_path.to_lowercase();
 
-    let mut entries: Vec<&str> = current.split(';').filter(|s| !s.is_empty()).collect();
+    let mut entries: Vec<&str> = current
+        .split(';')
+        .filter(|e| !e.is_empty() && !e.to_lowercase().starts_with(&junction_lower))
+        .collect();
 
-    // Remove any existing entry that looks like it belongs to this tool
-    entries.retain(|e| !e.to_lowercase().contains(&tool_marker));
-
-    // Prepend new bin entry
     entries.insert(0, new_bin);
-
     entries.join(";")
 }
 
