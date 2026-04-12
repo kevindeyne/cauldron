@@ -5,7 +5,9 @@ use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+const MAX_CACHED_DOWNLOADS: usize = 2;
 
 pub fn run(category: &str, vendor: &str, version: &str) {
     let cache = cache::get();
@@ -49,12 +51,35 @@ fn download(url: &str, checksum: &str, candidate_dir: &Path, junction_path: &Pat
 
     if zip_path.exists() {
         println!("Already downloaded: {}", zip_path.display());
+        let now = filetime::FileTime::now();
+        filetime::set_file_mtime(&zip_path, now).ok();
     } else {
         fetch_to_disk(url, &zip_path)?;
     }
-
+    evict_old_downloads(&downloads_dir);
     verify_checksum(&zip_path, checksum)?;
     unpack_and_link(&zip_path, candidate_dir, junction_path, category)
+}
+
+fn evict_old_downloads(downloads_dir: &Path) {
+    let mut zips: Vec<(std::time::SystemTime, PathBuf)> = fs::read_dir(downloads_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().map_or(false, |x| x == "zip"))
+        .filter_map(|e| {
+            let modified = e.metadata().ok()?.modified().ok()?;
+            Some((modified, e.path()))
+        })
+        .collect();
+
+    // Newest first
+    zips.sort_by(|a, b| b.0.cmp(&a.0));
+
+    for (_, path) in zips.into_iter().skip(MAX_CACHED_DOWNLOADS) {
+        println!("Removing old download: {}", path.display());
+        fs::remove_file(&path).ok();
+    }
 }
 
 fn fetch_to_disk(url: &str, zip_path: &Path) -> Result<()> {
