@@ -2,12 +2,19 @@ use crate::{cache, env_update, fetch, junction_setup, unpack, util};
 use anyhow::{bail, Context, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use reqwest::blocking::Client;
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha512};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 const MAX_CACHED_DOWNLOADS: usize = 2;
+
+// ---- Checksum ----
+
+enum Checksum<'a> {
+    Sha256(&'a str),
+    Sha512(&'a str),
+}
 
 // ---- Progress container ----
 
@@ -68,14 +75,14 @@ pub fn run(category: &str, vendor: &str, version: &str) {
             std::process::exit(1);
         });
 
-    let checksum = entry
-        .checksums
-        .as_ref()
-        .and_then(|c| c.sha256.as_ref())
-        .unwrap_or_else(|| {
-            eprintln!("No SHA-256 checksum available.");
-            std::process::exit(1);
-        });
+    let checksum = if let Some(sha256) = entry.checksums.as_ref().and_then(|c| c.sha256.as_ref()) {
+        Checksum::Sha256(sha256)
+    } else if let Some(sha512) = entry.checksums.as_ref().and_then(|c| c.sha512.as_ref()) {
+        Checksum::Sha512(sha512)
+    } else {
+        eprintln!("No SHA-256 or SHA-512 checksum available.");
+        std::process::exit(1);
+    };
 
     let candidate_dir = util::candidates_dir(category, vendor, version);
     let junction_path = util::junction_path(category);
@@ -98,7 +105,7 @@ pub fn run(category: &str, vendor: &str, version: &str) {
 
 fn install(
     url: &str,
-    checksum: &str,
+    checksum: Checksum,
     candidate_dir: &Path,
     junction_path: &Path,
     category: &str,
@@ -157,7 +164,7 @@ fn install(
     env_update::apply(&config.home_var, junction_path, &config.bin_subdir)
         .expect("Env update failed");
     bars.env.finish_with_message("Environment ready");
-    
+
     Ok(())
 }
 
@@ -187,24 +194,38 @@ fn fetch_to_disk(url: &str, zip_path: &Path, pb: &ProgressBar) -> Result<()> {
     Ok(())
 }
 
-fn verify_checksum(zip_path: &Path, expected: &str) -> Result<()> {
+
+fn verify_checksum(zip_path: &Path, checksum: Checksum) -> Result<()> {
     let mut file = File::open(zip_path)?;
-    let mut hasher = Sha256::new();
     let mut buf = [0u8; 8192];
 
-    loop {
-        let n = file.read(&mut buf)?;
-        if n == 0 {
-            break;
+    match checksum {
+        Checksum::Sha256(expected) => {
+            let mut hasher = Sha256::new();
+            loop {
+                let n = file.read(&mut buf)?;
+                if n == 0 { break; }
+                hasher.update(&buf[..n]);
+            }
+            let actual = hasher.finalize();
+            let expected_bytes = hex::decode(expected.trim())?;
+            if actual[..] != expected_bytes[..] {
+                bail!("SHA-256 checksum mismatch");
+            }
         }
-        hasher.update(&buf[..n]);
-    }
-
-    let actual = hasher.finalize();
-    let expected_bytes = hex::decode(expected.trim())?;
-
-    if actual[..] != expected_bytes[..] {
-        bail!("Checksum mismatch");
+        Checksum::Sha512(expected) => {
+            let mut hasher = Sha512::new();
+            loop {
+                let n = file.read(&mut buf)?;
+                if n == 0 { break; }
+                hasher.update(&buf[..n]);
+            }
+            let actual = hasher.finalize();
+            let expected_bytes = hex::decode(expected.trim())?;
+            if actual[..] != expected_bytes[..] {
+                bail!("SHA-512 checksum mismatch");
+            }
+        }
     }
 
     Ok(())
