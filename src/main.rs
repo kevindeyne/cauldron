@@ -26,7 +26,7 @@ enum Commands {
     List {
         category: Option<String>,
     },
-    /// Print the download URL for a package
+    /// Installs the specified version for a category and vendor (e.g java corretto), use 'list' to see options
     Install {
         category: Option<String>,
         vendor: Option<String>,

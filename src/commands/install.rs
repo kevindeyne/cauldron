@@ -121,7 +121,9 @@ fn install(
 
     // ---- Download ----
     if zip_path.exists() {
-        bars.download.finish_with_message("Already downloaded");
+        //bars.download.finish_with_message("Already downloaded");
+        bars.download.finish_and_clear();
+        bars.download.set_message("Already downloaded");
     } else {
         fetch_to_disk(url, &zip_path, &bars.download)?;
     }
@@ -155,7 +157,7 @@ fn install(
     env_update::apply(&config.home_var, junction_path, &config.bin_subdir)
         .expect("Env update failed");
     bars.env.finish_with_message("Environment ready");
-
+    
     Ok(())
 }
 
@@ -179,7 +181,9 @@ fn fetch_to_disk(url: &str, zip_path: &Path, pb: &ProgressBar) -> Result<()> {
         pb.set_position(downloaded);
     }
 
-    pb.finish_with_message("Download complete");
+    //pb.finish_with_message("Download complete");
+    pb.finish_and_clear();
+    pb.set_message("Download complete");
     Ok(())
 }
 

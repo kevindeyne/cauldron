@@ -32,6 +32,8 @@ pub struct Checksums {
     pub md5: Option<String>,
     #[serde(rename = "SHA-256")]
     pub sha256: Option<String>,
+    #[serde(rename = "SHA-512")]
+    pub sha512: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
