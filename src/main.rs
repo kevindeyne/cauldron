@@ -26,11 +26,10 @@ enum Commands {
     List {
         category: Option<String>,
     },
-    /// Print the download URL for a package
+    /// Installs the specified version for a category and optional vendor (e.g java corretto or maven), use 'list' to see options
     Install {
-        category: Option<String>,
-        vendor: Option<String>,
-        version: Option<String>,
+        /// Category, optional vendor, and version
+        args: Vec<String>,
     },
 }
 
@@ -53,19 +52,32 @@ fn main() {
         Some(Commands::List { category: Some(cat) }) => {
             commands::list::run(&cat);
         }
-        Some(Commands::Install { category: None, .. }) => {
-            eprintln!("Usage: cauldron install <category> <vendor> <version>\nExample: cauldron install java corretto 21");
-        }
-        Some(Commands::Install { category: Some(cat), vendor: None, .. }) => {
-            eprintln!("Usage: cauldron install {} <vendor> <version>", cat);
-            eprintln!("Run 'cauldron list {}' to see available vendors and versions.", cat);
-        }
-        Some(Commands::Install { category: Some(cat), vendor: Some(v), version: None }) => {
-            eprintln!("Usage: cauldron install {} {} <version>", cat, v);
-            eprintln!("Run 'cauldron list {}' to see available versions.", cat);
-        }
-        Some(Commands::Install { category: Some(cat), vendor: Some(v), version: Some(ver) }) => {
-            commands::install::run(&cat, &v, &ver);
+        Some(Commands::Install { args }) => {
+            match args.as_slice() {
+                [] => {
+                    eprintln!("Usage: cauldron install <category> [<vendor>] <version>\nExample: cauldron install java corretto 21 or cauldron install maven 3.4.0");
+                }
+                [cat] => {
+                    eprintln!("Usage: cauldron install {} [<vendor>] <version>", cat);
+                    eprintln!("Run 'cauldron list {}' to see available vendors and versions.", cat);
+                }
+                [cat, ver] => {
+                    let vendor = match crate::fetch::fetch_tool_config(&cat) {
+                        Ok(config) => config.default_vendor.unwrap_or(cat.clone()),
+                        Err(e) => {
+                            eprintln!("Failed to fetch config for {}: {}", cat, e);
+                            std::process::exit(1);
+                        }
+                    };
+                    commands::install::run(&cat, &vendor, &ver);
+                }
+                [cat, ven, ver] => {
+                    commands::install::run(&cat, &ven, &ver);
+                }
+                _ => {
+                    eprintln!("Too many arguments. Usage: cauldron install <category> [<vendor>] <version>");
+                }
+            }
         }
     }
 }

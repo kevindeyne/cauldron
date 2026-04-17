@@ -32,6 +32,8 @@ pub struct Checksums {
     pub md5: Option<String>,
     #[serde(rename = "SHA-256")]
     pub sha256: Option<String>,
+    #[serde(rename = "SHA-512")]
+    pub sha512: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -45,4 +47,5 @@ pub struct Cache {
 pub struct ToolConfig {
     pub home_var: String,   // e.g. "JAVA_HOME"
     pub bin_subdir: String, // e.g. "bin"
+    pub default_vendor: Option<String>, // default vendor for this category
 }

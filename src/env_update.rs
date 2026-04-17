@@ -10,6 +10,11 @@ const JAVA_MARKERS: &[&str] = &[
     "jdk", "jre", "java", "corretto", "adoptium", "temurin", "graalvm", "zulu", "liberica", "semeru",
 ];
 
+// Keywords that identify a Maven installation in PATH entries
+const MAVEN_MARKERS: &[&str] = &[
+    "maven", "mvn", "apache-maven",
+];
+
 pub fn apply(home_var: &str, junction_path: &Path, bin_subdir: &str) -> Result<(), String> {
     let junction_str = junction_path
         .to_str()
@@ -33,7 +38,7 @@ fn set_home_var(home_var: &str, value: &str) -> Result<(), String> {
         .map_err(|e| format!("Cannot set {}: {}", home_var, e))
 }
 
-/// Remove any non-cauldron Java entries from the user PATH, then prepend new_bin.
+/// Remove any non-cauldron conflicting entries from the user PATH, then prepend new_bin.
 fn clean_user_path(new_bin: &str, junction_str: &str, home_var: &str) -> Result<(), String> {
     let env = open_user_env(KEY_READ | KEY_WRITE)?;
     let current: String = env.get_value("PATH").unwrap_or_default();
@@ -48,8 +53,8 @@ fn clean_user_path(new_bin: &str, junction_str: &str, home_var: &str) -> Result<
             let lower = e.to_lowercase();
             // Keep if it's our cauldron junction
             if lower.starts_with(&junction_lower) { return false; }
-            // Remove if it looks like a Java install
-            if looks_like_java(home_var, &lower) {
+            // Remove if it looks like an installation
+            if looks_like_installation(home_var, &lower) {
                 removed.push(*e);
                 return false;
             }
@@ -58,7 +63,7 @@ fn clean_user_path(new_bin: &str, junction_str: &str, home_var: &str) -> Result<
         .collect();
 
     for r in &removed {
-        println!("  Removing old Java entry from user PATH: {}", r);
+        println!("  Removing old conflicting entry from user PATH: {}", r);
     }
 
     entries.insert(0, new_bin);
@@ -71,7 +76,7 @@ fn clean_user_path(new_bin: &str, junction_str: &str, home_var: &str) -> Result<
     Ok(())
 }
 
-/// Scan system PATH for Java entries and attempt removal with privilege escalation if needed.
+/// Scan system PATH for conflicting entries and attempt removal with privilege escalation if needed.
 fn clean_system_path(home_var: &str) -> Result<(), String> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
 
@@ -82,17 +87,17 @@ fn clean_system_path(home_var: &str) -> Result<(), String> {
     };
 
     let current: String = env_read.get_value("PATH").unwrap_or_default();
-    let java_entries: Vec<&str> = current
+    let conflicting_entries: Vec<&str> = current
         .split(';')
-        .filter(|e| !e.is_empty() && looks_like_java(home_var, &e.to_lowercase()))
+        .filter(|e| !e.is_empty() && looks_like_installation(home_var, &e.to_lowercase()))
         .collect();
 
-    if java_entries.is_empty() {
+    if conflicting_entries.is_empty() {
         return Ok(());
     }
 
-    println!("  Found Java entries in system PATH that conflict with cauldron:");
-    for e in &java_entries {
+    println!("  Found conflicting entries in system PATH that conflict with cauldron:");
+    for e in &conflicting_entries {
         println!("    {}", e);
     }
     println!("  Attempting to remove them. This requires administrator privileges.");
@@ -103,7 +108,7 @@ fn clean_system_path(home_var: &str) -> Result<(), String> {
         Ok(env_write) => {
             let cleaned: Vec<&str> = current
                 .split(';')
-                .filter(|e| !e.is_empty() && !looks_like_java(home_var, &e.to_lowercase()))
+                .filter(|e| !e.is_empty() && !looks_like_installation(home_var, &e.to_lowercase()))
                 .collect();
 
             env_write
@@ -115,7 +120,7 @@ fn clean_system_path(home_var: &str) -> Result<(), String> {
         Err(_) => {
             // Re-launch self as admin via ShellExecuteW with "runas"
             println!("  Elevation required. Launching elevated process to clean system PATH...");
-            if let Err(e) = relaunch_as_admin_for_cleanup(&java_entries) {
+            if let Err(e) = relaunch_as_admin_for_cleanup(&conflicting_entries) {
                 println!("  Could not elevate: {}.", e);
                 println!("  Please remove the above entries from your system PATH manually.");
             }
@@ -202,11 +207,20 @@ pub fn clean_system_path_elevated(raw_entries: &str) {
     broadcast_settings_change();
 }
 
-fn looks_like_java(home_var: &str, lower: &str) -> bool {
+fn looks_like_installation(home_var: &str, lower: &str) -> bool {
     let home_lower = home_var.to_lowercase();
-    // Always match on the actual home var name (e.g. "java_home")
+    // Always match on the actual home var name (e.g. "java_home", "maven_home")
     if lower.contains(&home_lower) { return true; }
-    JAVA_MARKERS.iter().any(|m| lower.contains(m))
+    
+    let markers = if home_lower.contains("java") {
+        JAVA_MARKERS
+    } else if home_lower.contains("maven") {
+        MAVEN_MARKERS
+    } else {
+        &[]
+    };
+    
+    markers.iter().any(|m| lower.contains(m))
 }
 
 fn open_user_env(access: u32) -> Result<RegKey, String> {
@@ -239,16 +253,25 @@ mod tests {
 
     #[test]
     fn detects_java_markers() {
-        assert!(looks_like_java("JAVA_HOME", r"c:\program files\java\jdk-21\bin"));
-        assert!(looks_like_java("JAVA_HOME", r"c:\program files\corretto-21\bin"));
-        assert!(looks_like_java("JAVA_HOME", r"c:\tools\temurin\bin"));
-        assert!(!looks_like_java("JAVA_HOME", r"c:\windows\system32"));
-        assert!(!looks_like_java("JAVA_HOME", r"c:\users\kevin\.cargo\bin"));
+        assert!(looks_like_installation("JAVA_HOME", r"c:\program files\java\jdk-21\bin"));
+        assert!(looks_like_installation("JAVA_HOME", r"c:\program files\corretto-21\bin"));
+        assert!(looks_like_installation("JAVA_HOME", r"c:\tools\temurin\bin"));
+        assert!(!looks_like_installation("JAVA_HOME", r"c:\windows\system32"));
+        assert!(!looks_like_installation("JAVA_HOME", r"c:\users\kevin\.cargo\bin"));
+    }
+
+    #[test]
+    fn detects_maven_markers() {
+        assert!(looks_like_installation("MAVEN_HOME", r"c:\tools\apache-maven\bin"));
+        assert!(looks_like_installation("MAVEN_HOME", r"c:\program files\maven\bin"));
+        assert!(looks_like_installation("MAVEN_HOME", r"c:\mvn\bin"));
+        assert!(!looks_like_installation("MAVEN_HOME", r"c:\windows\system32"));
+        assert!(!looks_like_installation("MAVEN_HOME", r"c:\users\kevin\.cargo\bin"));
     }
 
     #[test]
     fn does_not_flag_maven_as_java() {
-        assert!(!looks_like_java("MAVEN_HOME", r"c:\tools\apache-maven\bin"));
-        assert!(!looks_like_java("MAVEN_HOME", r"c:\windows\system32"));
+        assert!(!looks_like_installation("JAVA_HOME", r"c:\tools\apache-maven\bin"));
+        assert!(!looks_like_installation("JAVA_HOME", r"c:\windows\system32"));
     }
 }
