@@ -98,7 +98,11 @@ pub fn run(category: &str, vendor: &str, version: &str) {
         std::process::exit(1);
     }
 
-    println!("Done! {} {} {} is now active.", category, vendor, version);
+    if vendor == category {
+        println!("Done! {} {} is now active.", category, version);
+    } else {
+        println!("Done! {} {} {} is now active.", category, vendor, version);
+    }
 }
 
 // ---- Pipeline ----

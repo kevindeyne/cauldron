@@ -47,4 +47,5 @@ pub struct Cache {
 pub struct ToolConfig {
     pub home_var: String,   // e.g. "JAVA_HOME"
     pub bin_subdir: String, // e.g. "bin"
+    pub default_vendor: Option<String>, // default vendor for this category
 }
