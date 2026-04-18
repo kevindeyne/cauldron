@@ -69,7 +69,7 @@ pub fn run(category: &str, vendor: &str, version: &str) {
         .and_then(|entries| entries.iter().find(|e| e.version == version))
         .unwrap_or_else(|| {
             eprintln!(
-                "'{}' '{}' version '{}' not found. Run 'sdk list {}'",
+                "'{}' '{}' version '{}' not found. Run 'cauldron list {}'",
                 vendor, version, category, category
             );
             std::process::exit(1);
